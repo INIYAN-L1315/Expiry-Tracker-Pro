@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Expiry Tracker Pro</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root { --safe: #2ecc71; --warning: #f1c40f; --danger: #e74c3c; --dark: #2c3e50; --light: #ecf0f1; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--light); margin: 0; padding: 20px; }
+        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        .nav { display: flex; gap: 10px; margin-bottom: 25px; border-bottom: 2px solid var(--light); padding-bottom: 10px; }
+        .nav button { padding: 10px 20px; border: none; background: none; cursor: pointer; font-weight: bold; color: var(--dark); border-radius: 5px; }
+        .nav button.active { background: var(--dark); color: white; }
+        .form-container { display: flex; flex-direction: column; gap: 15px; margin-bottom: 30px; background: #f9f9f9; padding: 20px; border-radius: 8px; }
+        .form-row { display: flex; gap: 10px; flex-wrap: wrap; }
+        input, select { padding: 12px; border: 1px solid #ddd; border-radius: 6px; flex: 1; min-width: 150px; }
+        #customCategoryInput { border: 2px solid var(--dark); background: #fffde7; }
+        .btn-add { background: var(--dark); color: white; border: none; padding: 0 30px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { text-align: left; padding: 15px; border-bottom: 1px solid #eee; }
+        .status-danger { color: var(--danger); font-weight: bold; }
+        .btn-utilize { background: var(--safe); color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; }
+        .hidden { display: none; }
+        .chart-container { width: 400px; margin: 0 auto; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>🍎 Expiry Tracker</h2>
+    <div class="nav">
+        <button id="tab-add" class="active" onclick="showPage('add')">Add & Track</button>
+        <button id="tab-stats" onclick="showPage('stats')">Wastage Dashboard</button>
+    </div>
+
+    <div id="page-add">
+        <div class="form-container">
+            <div class="form-row">
+                <input type="text" id="prodName" placeholder="Product Name">
+                <select id="prodCategory" onchange="checkCategory(this.value)">
+                    <option value="">Select Category</option>
+                    <option value="Dairy">Dairy</option>
+                    <option value="Vegetables">Vegetables</option>
+                    <option value="Fruits">Fruits</option>
+                    <option value="Others">Others</option>
+                </select>
+                <input type="text" id="customCategoryInput" class="hidden" placeholder="Enter custom category">
+                <input type="date" id="expiryDate">
+                <button class="btn-add" onclick="addProduct()">Add Product</button>
+            </div>
+        </div>
+        <table>
+            <thead><tr><th>Product</th><th>Category</th><th>Expiry Date</th><th>Actions</th></tr></thead>
+            <tbody id="productTableBody"></tbody>
+        </table>
+    </div>
+
+    <div id="page-stats" class="hidden">
+        <h3>Wastage Analysis</h3>
+        <div class="chart-container">
+            <canvas id="wastageChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<script>
+    const API_URL = 'http://localhost:3000';
+
+    function checkCategory(val) {
+        document.getElementById('customCategoryInput').classList.toggle('hidden', val !== 'Others');
+    }
+
+    function showPage(page) {
+        document.getElementById('page-add').classList.toggle('hidden', page !== 'add');
+        document.getElementById('page-stats').classList.toggle('hidden', page !== 'stats');
+        document.getElementById('tab-add').classList.toggle('active', page === 'add');
+        document.getElementById('tab-stats').classList.toggle('active', page === 'stats');
+        if (page === 'stats') updateChart();
+    }
+
+    async function fetchProducts() {
+        const res = await fetch(`${API_URL}/items`);
+        const data = await res.json();
+        renderProducts(data);
+    }
+
+    async function addProduct() {
+        const name = document.getElementById('prodName').value;
+        const cat = document.getElementById('prodCategory').value;
+        const category = cat === 'Others' ? document.getElementById('customCategoryInput').value : cat;
+        const expiry_date = document.getElementById('expiryDate').value;
+        await fetch(`${API_URL}/items`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, category, expiry_date })
+        });
+        fetchProducts();
+    }
+
+    async function utilizeProduct(id) {
+        await fetch(`${API_URL}/items/${id}`, { method: 'PUT' });
+        fetchProducts();
+    }
+
+    async function deleteProduct(id) {
+        await fetch(`${API_URL}/items/${id}`, { method: 'DELETE' });
+        fetchProducts();
+    }
+
+    function renderProducts(products) {
+        const tableBody = document.getElementById('productTableBody');
+        tableBody.innerHTML = '';
+        products.forEach(p => {
+            if (p.is_consumed) return;
+            const row = `<tr><td>${p.name}</td><td>${p.category}</td><td>${p.expiry_date.split('T')[0]}</td>
+                <td><button class="btn-utilize" onclick="utilizeProduct(${p.id})">Utilize</button>
+                <button onclick="deleteProduct(${p.id})">🗑️</button></td></tr>`;
+            tableBody.innerHTML += row;
+        });
+    }
+
+    async function updateChart() {
+        const res = await fetch(`${API_URL}/items`);
+        const products = await res.json();
+        const today = new Date();
+        today.setHours(0,0,0,0);
+        
+        const wastageData = {};
+        products.forEach(p => {
+            if (new Date(p.expiry_date) < today && !p.is_consumed) {
+                wastageData[p.category] = (wastageData[p.category] || 0) + 1;
+            }
+        });
+
+        const ctx = document.getElementById('wastageChart').getContext('2d');
+        if (window.myChartInstance) window.myChartInstance.destroy();
+
+        window.myChartInstance = new Chart(ctx, {
+            type: 'pie',
+            data: {
+                labels: Object.keys(wastageData),
+                datasets: [{ data: Object.values(wastageData), backgroundColor: ['#e74c3c', '#3498db', '#f1c40f', '#9b59b6', '#2ecc71'] }]
+            }
+        });
+    }
+
+    fetchProducts();
+</script>
+</body>
+</html>
